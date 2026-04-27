@@ -2,7 +2,7 @@ import { Notification } from 'electron';
 import logger from 'electron-log';
 import { RepoConfig } from './config';
 import { getSeenIds, markSeen } from './store';
-import { notify, notifyBatch, WorkflowRun } from './notifier';
+import { notify, notifyBatch, notifyStarted, WorkflowRun } from './notifier';
 
 export type ActiveRuns = Map<string, WorkflowRun[]>; // repo → in-progress runs
 
@@ -155,9 +155,15 @@ async function pollRepo(repoConfig: RepoConfig): Promise<void> {
   const inProgressRuns = await fetchRuns(repo, 'in_progress', actorFilter);
   if (inProgressRuns) {
     const filtered = applyFilters(inProgressRuns, repoConfig);
+    const prevIds = new Set((activeRuns.get(repo) ?? []).map(r => r.id));
+    const newlyStarted = filtered.filter(r => !prevIds.has(r.id));
     activeRuns.set(repo, filtered);
     if (filtered.length > 0) {
       log(`${repo}: ${filtered.length} run(s) in progress — ${filtered.map(r => `"${r.name}" [${r.head_branch}]`).join(', ')}`);
+    }
+    if (newlyStarted.length > 0 && initializedRepos.has(repo)) {
+      log(`  ${newlyStarted.length} newly started — ${newlyStarted.map(r => `"${r.name}"`).join(', ')}`);
+      notifyStarted();
     }
   }
 

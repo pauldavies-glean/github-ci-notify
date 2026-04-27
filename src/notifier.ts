@@ -4,6 +4,7 @@ import { exec } from 'child_process';
 const SOUNDS = {
   success: '/System/Library/Sounds/Glass.aiff',
   failure: '/System/Library/Sounds/Basso.aiff',
+  started: '/System/Library/Sounds/Submarine.aiff',
 };
 
 export interface WorkflowRun {
@@ -53,4 +54,8 @@ export function notifyBatch(repo: string, runs: WorkflowRun[]): void {
 function playSound(conclusion: string): void {
   const sound = conclusion === 'success' ? SOUNDS.success : SOUNDS.failure;
   exec(`afplay "${sound}"`);
+}
+
+export function notifyStarted(): void {
+  exec(`afplay "${SOUNDS.started}"`);
 }
