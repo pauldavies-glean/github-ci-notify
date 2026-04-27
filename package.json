@@ -1,0 +1,22 @@
+{
+  "name": "github-ci-notify",
+  "version": "1.0.0",
+  "description": "macOS tray app for GitHub CI notifications",
+  "main": "dist/main.js",
+  "scripts": {
+    "start": "tsc && electron dist/main.js",
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "package": "tsc && electron-builder"
+  },
+  "packageManager": "yarn@1.22.19",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "electron": "^28.0.0",
+    "electron-builder": "^24.0.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "electron-log": "^5.4.3"
+  }
+}

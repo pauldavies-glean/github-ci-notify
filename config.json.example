@@ -1,0 +1,17 @@
+{
+  "token": "ghp_xxxxxxxxxxxxxxxxxxxx",
+  "pollIntervalSeconds": 45,
+  "repos": [
+    {
+      "repo": "owner/repo1",
+      "workflows": ["CI", "Deploy"]
+    },
+    {
+      "repo": "owner/repo2"
+    },
+    {
+      "repo": "owner/shared-repo",
+      "filterCurrentUser": false
+    }
+  ]
+}

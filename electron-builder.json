@@ -1,0 +1,12 @@
+{
+  "appId": "com.local.github-ci-notify",
+  "productName": "GitHub CI Notify",
+  "mac": {
+    "target": "dmg",
+    "category": "public.app-category.developer-tools"
+  },
+  "files": ["dist/**", "assets/**"],
+  "extraResources": [
+    { "from": "config.json", "to": "config.json" }
+  ]
+}
