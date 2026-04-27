@@ -6,6 +6,7 @@ logger.transports.console.level = 'info';
 logger.transports.file.format = '[{y}-{m}-{d} {h}:{i}:{s}] [{level}] {text}';
 import { loadConfig } from './config';
 import { initStore } from './store';
+import { initManualWatch } from './manual-watch';
 import { createTray, updateTrayMenu } from './tray';
 import { startPolling } from './poller';
 
@@ -23,7 +24,7 @@ app.whenReady().then(async () => {
 
   let config;
   try {
-    config = loadConfig();
+    config = await loadConfig();
   } catch (err) {
     new Notification({
       title: 'GitHub CI Notify — Config Error',
@@ -34,6 +35,7 @@ app.whenReady().then(async () => {
   }
 
   initStore();
+  initManualWatch();
   createTray(config.repos);
 
   try {

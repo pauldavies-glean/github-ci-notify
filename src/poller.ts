@@ -3,6 +3,7 @@ import logger from 'electron-log';
 import { RepoConfig } from './config';
 import { getSeenIds, markSeen } from './store';
 import { notify, notifyBatch, notifyStarted, WorkflowRun } from './notifier';
+import { getWatches, removeWatch } from './manual-watch';
 
 export type ActiveRuns = Map<string, WorkflowRun[]>; // repo → in-progress runs
 
@@ -204,10 +205,45 @@ async function pollRepo(repoConfig: RepoConfig): Promise<void> {
   }
 }
 
+export async function fetchSingleRun(repo: string, runId: number): Promise<WorkflowRun | null> {
+  const res = await githubFetch(`https://api.github.com/repos/${repo}/actions/runs/${runId}`);
+  if (!res) return null;
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    log(`fetchSingleRun ${repo}#${runId}: ${res.status}`);
+    return null;
+  }
+  return (await res.json()) as WorkflowRun;
+}
+
+export async function resolveRunId(runId: number): Promise<{ repo: string; run: WorkflowRun } | null> {
+  const probes = _repos.map(async rc => {
+    const run = await fetchSingleRun(rc.repo, runId);
+    return run ? { repo: rc.repo, run } : null;
+  });
+  const results = await Promise.all(probes);
+  return results.find((r): r is { repo: string; run: WorkflowRun } => r !== null) ?? null;
+}
+
+async function pollManualWatches(): Promise<void> {
+  const watches = getWatches();
+  if (watches.length === 0) return;
+  for (const w of watches) {
+    const run = await fetchSingleRun(w.repo, w.runId);
+    if (!run) continue;
+    if (run.status === 'completed') {
+      log(`manual watch: ${w.repo} #${run.run_number} "${run.name}" — ${run.conclusion}`);
+      notify(w.repo, run);
+      removeWatch(w.repo, w.runId);
+    }
+  }
+}
+
 async function tick(): Promise<void> {
   if (state.paused) return;
 
   await Promise.allSettled(_repos.map(pollRepo));
+  await pollManualWatches();
   _onUpdate(new Map(activeRuns));
 
   if (!state.paused) {
