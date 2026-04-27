@@ -28,6 +28,25 @@ const initializedRepos = new Set<string>();
 
 const log = (msg: string) => logger.info(msg);
 
+let rateLimitBlockedUntil = 0; // epoch ms; 0 = not blocked
+
+function backoffMsFromHeaders(res: Response): number {
+  const reset = res.headers.get('X-RateLimit-Reset');
+  if (reset) {
+    const waitMs = parseInt(reset, 10) * 1000 - Date.now();
+    if (waitMs > 0) return waitMs;
+  }
+  const retryAfter = res.headers.get('Retry-After');
+  if (retryAfter) return parseInt(retryAfter, 10) * 1000;
+  return 60_000;
+}
+
+function applyRateLimitBlock(res: Response, label: string): void {
+  const backoffMs = backoffMsFromHeaders(res);
+  rateLimitBlockedUntil = Date.now() + backoffMs;
+  log(`Rate limited (${label}) — blocking for ${Math.ceil(backoffMs / 1000)}s`);
+}
+
 function githubHeaders(): Record<string, string> {
   return {
     Authorization: `Bearer ${_token}`,
@@ -38,8 +57,18 @@ function githubHeaders(): Record<string, string> {
 }
 
 async function githubFetch(url: string): Promise<Response | null> {
+  const now = Date.now();
+  if (rateLimitBlockedUntil > now) {
+    log(`Rate limit backoff — skipping fetch (${Math.ceil((rateLimitBlockedUntil - now) / 1000)}s left)`);
+    return null;
+  }
   try {
-    return await fetch(url, { headers: githubHeaders() });
+    const res = await fetch(url, { headers: githubHeaders() });
+    const remaining = res.headers.get('X-RateLimit-Remaining');
+    if (remaining !== null && parseInt(remaining, 10) === 0) {
+      applyRateLimitBlock(res, 'exhausted');
+    }
+    return res;
   } catch (err) {
     log(`Network error: ${String(err)}`);
     return null;
@@ -78,8 +107,23 @@ async function fetchRuns(
   );
   if (!res) return null;
 
-  if (res.status === 401 || res.status === 403) {
-    log(`Auth failed for ${repo} (${res.status}) — stopping poller`);
+  if (res.status === 401) {
+    log(`Auth failed for ${repo} (401) — stopping poller`);
+    new Notification({
+      title: 'GitHub CI Notify — Auth Failed',
+      body: `Check token in config.json (repo: ${repo})`,
+    }).show();
+    stopPolling();
+    return null;
+  }
+
+  if (res.status === 403) {
+    const remaining = res.headers.get('X-RateLimit-Remaining');
+    if (remaining === '0') {
+      applyRateLimitBlock(res, '403 primary');
+      return null;
+    }
+    log(`Auth failed for ${repo} (403) — stopping poller`);
     new Notification({
       title: 'GitHub CI Notify — Auth Failed',
       body: `Check token in config.json (repo: ${repo})`,
@@ -89,9 +133,7 @@ async function fetchRuns(
   }
 
   if (res.status === 429) {
-    const retryAfter = parseInt(res.headers.get('Retry-After') ?? '60', 10);
-    log(`Rate limited on ${repo} — backing off ${retryAfter}s`);
-    await new Promise<void>(r => setTimeout(r, retryAfter * 1000));
+    applyRateLimitBlock(res, '429 secondary');
     return null;
   }
 

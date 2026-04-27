@@ -3,7 +3,10 @@
   "productName": "GitHub CI Notify",
   "mac": {
     "target": "dmg",
-    "category": "public.app-category.developer-tools"
+    "category": "public.app-category.developer-tools",
+    "extendInfo": {
+      "NSUserNotificationAlertStyle": "alert"
+    }
   },
   "files": ["dist/**", "assets/**"],
   "extraResources": [

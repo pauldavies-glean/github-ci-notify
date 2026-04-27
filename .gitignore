@@ -3,3 +3,4 @@ dist/
 config.json
 *.dmg
 release/
+.DS_Store
