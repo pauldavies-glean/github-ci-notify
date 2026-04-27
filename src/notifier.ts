@@ -56,6 +56,28 @@ function playSound(conclusion: string): void {
   exec(`afplay "${sound}"`);
 }
 
-export function notifyStarted(): void {
+export function notifyStarted(repo: string, runs: WorkflowRun[]): void {
+  const repoName = repo.split('/')[1] ?? repo;
+
+  if (runs.length === 1) {
+    const run = runs[0];
+    const notification = new Notification({
+      title: `▶ ${repoName}`,
+      body: `${run.name} started (#${run.run_number}) [${run.head_branch}]`,
+      silent: true,
+    });
+    notification.on('click', () => {
+      shell.openExternal(run.html_url);
+    });
+    notification.show();
+  } else {
+    const notification = new Notification({
+      title: `▶ ${repoName}`,
+      body: `${runs.length} runs started — ${runs.map(r => r.name).join(', ')}`,
+      silent: true,
+    });
+    notification.show();
+  }
+
   exec(`afplay "${SOUNDS.started}"`);
 }

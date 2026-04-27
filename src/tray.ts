@@ -135,6 +135,14 @@ function buildMenu(): Menu {
     },
     { type: 'separator' as const },
     {
+      label: 'Open Log',
+      click: () => {
+        const logPath = logger.transports.file.getFile().path;
+        shell.openPath(logPath);
+      },
+    },
+    { type: 'separator' as const },
+    {
       label: paused ? 'Resume Polling' : 'Pause Polling',
       click: () => {
         if (isPaused()) {

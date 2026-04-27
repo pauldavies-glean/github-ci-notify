@@ -164,7 +164,7 @@ async function pollRepo(repoConfig: RepoConfig): Promise<void> {
     }
     if (newlyStarted.length > 0 && initializedRepos.has(repo)) {
       log(`  ${newlyStarted.length} newly started — ${newlyStarted.map(r => `"${r.name}"`).join(', ')}`);
-      notifyStarted();
+      notifyStarted(repo, newlyStarted);
     }
   }
 

@@ -7,7 +7,8 @@
     "start": "tsc && electron dist/main.js",
     "build": "tsc",
     "watch": "tsc --watch",
-    "package": "tsc && electron-builder"
+    "package": "tsc && electron-builder && yarn postpackage",
+    "postpackage": "xattr -cr 'dist/mac-arm64/GitHub CI Notify.app' && codesign --force --deep --sign - 'dist/mac-arm64/GitHub CI Notify.app'"
   },
   "packageManager": "yarn@1.22.19",
   "devDependencies": {
