@@ -67,27 +67,64 @@ async function watchFromClipboard(): Promise<void> {
   };
   addWatch(watch);
   logger.info(`Manual watch added: ${watch.repo} #${watch.runNumber} "${watch.name}" [${watch.branch}]`);
-  new Notification({
+  const confirmation = new Notification({
     title: 'Watching run',
     body: `${watch.name} #${watch.runNumber} [${watch.branch}] (${watch.repo})`,
-  }).show();
+    silent: true,
+  });
+  const runUrl = `https://github.com/${watch.repo}/actions/runs/${watch.runId}`;
+  confirmation.on('click', () => { shell.openExternal(runUrl); });
+  confirmation.show();
   updateTrayMenu();
+}
+
+interface RunEntry {
+  name: string;
+  runNumber: number;
+  branch: string;
+  runId: number;
+  manual: boolean;
 }
 
 function buildMenu(): Menu {
   const paused = isPaused();
 
-  const activeItems: Electron.MenuItemConstructorOptions[] = [];
-  let totalActive = 0;
-
+  const byRepo = new Map<string, RunEntry[]>();
   for (const [repo, runs] of _active) {
     if (runs.length === 0) continue;
-    totalActive += runs.length;
+    const arr = byRepo.get(repo) ?? [];
+    for (const r of runs) {
+      arr.push({ name: r.name, runNumber: r.run_number, branch: r.head_branch, runId: r.id, manual: false });
+    }
+    byRepo.set(repo, arr);
+  }
+  for (const w of getWatches()) {
+    const arr = byRepo.get(w.repo) ?? [];
+    if (arr.some(e => e.runId === w.runId)) continue;
+    arr.push({ name: w.name, runNumber: w.runNumber, branch: w.branch, runId: w.runId, manual: true });
+    byRepo.set(w.repo, arr);
+  }
+
+  const activeItems: Electron.MenuItemConstructorOptions[] = [];
+  let totalActive = 0;
+  for (const [repo, entries] of byRepo) {
+    if (entries.length === 0) continue;
+    totalActive += entries.length;
     activeItems.push({ label: repo, enabled: false });
-    for (const run of runs) {
+    for (const e of entries) {
+      const url = `https://github.com/${repo}/actions/runs/${e.runId}`;
+      const submenu: Electron.MenuItemConstructorOptions[] = [
+        { label: 'Open in browser', click: () => { shell.openExternal(url); } },
+      ];
+      if (e.manual) {
+        submenu.push({
+          label: 'Stop watching',
+          click: () => { removeWatch(repo, e.runId); updateTrayMenu(); },
+        });
+      }
       activeItems.push({
-        label: `  ⏳ ${run.name} #${run.run_number} [${run.head_branch}]`,
-        enabled: false,
+        label: `  ⏳ ${e.name} #${e.runNumber} [${e.branch}]`,
+        submenu,
       });
     }
   }
@@ -96,38 +133,11 @@ function buildMenu(): Menu {
     ? `${totalActive} run${totalActive !== 1 ? 's' : ''} in progress`
     : `Watching ${_repos.length} repo${_repos.length !== 1 ? 's' : ''}`;
 
-  const watches = getWatches();
-  const watchItems: Electron.MenuItemConstructorOptions[] = watches.length > 0
-    ? [
-        { type: 'separator' },
-        { label: `Manually watching (${watches.length})`, enabled: false },
-        ...watches.map<Electron.MenuItemConstructorOptions>(w => ({
-          label: `  ${w.name} #${w.runNumber} [${w.branch}] — ${w.repo}`,
-          submenu: [
-            {
-              label: 'Open in browser',
-              click: () => {
-                shell.openExternal(`https://github.com/${w.repo}/actions/runs/${w.runId}`);
-              },
-            },
-            {
-              label: 'Stop watching',
-              click: () => {
-                removeWatch(w.repo, w.runId);
-                updateTrayMenu();
-              },
-            },
-          ],
-        })),
-      ]
-    : [];
-
   return Menu.buildFromTemplate([
     { label: headerLabel, enabled: false },
     ...(activeItems.length > 0
       ? [{ type: 'separator' as const }, ...activeItems]
       : []),
-    ...watchItems,
     { type: 'separator' as const },
     {
       label: 'Watch run from clipboard',
