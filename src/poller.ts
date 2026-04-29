@@ -26,6 +26,7 @@ let _onUpdate: ((active: ActiveRuns) => void) = () => {};
 
 const activeRuns: ActiveRuns = new Map();
 const initializedRepos = new Set<string>();
+const notifiedStarted = new Map<string, Set<number>>(); // repo → set of run ids already notified
 
 const log = (msg: string) => logger.info(msg);
 
@@ -163,15 +164,19 @@ async function pollRepo(repoConfig: RepoConfig): Promise<void> {
   const inProgressRuns = await fetchRuns(repo, 'in_progress', actorFilter);
   if (inProgressRuns) {
     const filtered = applyFilters(inProgressRuns, repoConfig);
-    const prevIds = new Set((activeRuns.get(repo) ?? []).map(r => r.id));
-    const newlyStarted = filtered.filter(r => !prevIds.has(r.id));
+    const notified = notifiedStarted.get(repo) ?? new Set<number>();
+    const newlyStarted = filtered.filter(r => !notified.has(r.id));
     activeRuns.set(repo, filtered);
     if (filtered.length > 0) {
       log(`${repo}: ${filtered.length} run(s) in progress — ${filtered.map(r => `"${r.name}" [${r.head_branch}]`).join(', ')}`);
     }
-    if (newlyStarted.length > 0 && initializedRepos.has(repo)) {
-      log(`  ${newlyStarted.length} newly started — ${newlyStarted.map(r => `"${r.name}"`).join(', ')}`);
-      notifyStarted(repo, newlyStarted);
+    if (newlyStarted.length > 0) {
+      for (const r of newlyStarted) notified.add(r.id);
+      notifiedStarted.set(repo, notified);
+      if (initializedRepos.has(repo)) {
+        log(`  ${newlyStarted.length} newly started — ${newlyStarted.map(r => `"${r.name}"`).join(', ')}`);
+        notifyStarted(repo, newlyStarted);
+      }
     }
   }
 
