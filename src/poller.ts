@@ -60,7 +60,7 @@ function githubHeaders(): Record<string, string> {
 async function githubFetch(url: string): Promise<Response | null> {
   const now = Date.now();
   if (rateLimitBlockedUntil > now) {
-    log(`Rate limit backoff — skipping fetch (${Math.ceil((rateLimitBlockedUntil - now) / 1000)}s left)`);
+    log(`Rate limit backoff — skipping fetch ${url} (${Math.ceil((rateLimitBlockedUntil - now) / 1000)}s left)`);
     return null;
   }
   try {
@@ -71,7 +71,7 @@ async function githubFetch(url: string): Promise<Response | null> {
     }
     return res;
   } catch (err) {
-    log(`Network error: ${String(err)}`);
+    log(`Network error fetching ${url}: ${String(err)}`);
     return null;
   }
 }
@@ -139,12 +139,19 @@ async function fetchRuns(
   }
 
   if (!res.ok) {
-    log(`Unexpected response for ${repo}: ${res.status}`);
+    let bodySnippet = '';
+    try { bodySnippet = (await res.text()).slice(0, 200); } catch { /* ignore */ }
+    log(`Unexpected ${res.status} for ${repo} (status=${status}) — ${bodySnippet}`);
     return null;
   }
 
-  const data = (await res.json()) as { workflow_runs: WorkflowRun[] };
-  return data.workflow_runs;
+  try {
+    const data = (await res.json()) as { workflow_runs: WorkflowRun[] };
+    return data.workflow_runs;
+  } catch (err) {
+    log(`Failed to parse runs JSON for ${repo}: ${String(err)}`);
+    return null;
+  }
 }
 
 async function pollRepo(repoConfig: RepoConfig): Promise<void> {
@@ -210,10 +217,17 @@ export async function fetchSingleRun(repo: string, runId: number): Promise<Workf
   if (!res) return null;
   if (res.status === 404) return null;
   if (!res.ok) {
-    log(`fetchSingleRun ${repo}#${runId}: ${res.status}`);
+    let bodySnippet = '';
+    try { bodySnippet = (await res.text()).slice(0, 200); } catch { /* ignore */ }
+    log(`fetchSingleRun ${repo}#${runId}: ${res.status} — ${bodySnippet}`);
     return null;
   }
-  return (await res.json()) as WorkflowRun;
+  try {
+    return (await res.json()) as WorkflowRun;
+  } catch (err) {
+    log(`Failed to parse run JSON for ${repo}#${runId}: ${String(err)}`);
+    return null;
+  }
 }
 
 export async function resolveRunId(runId: number): Promise<{ repo: string; run: WorkflowRun } | null> {
@@ -242,8 +256,12 @@ async function pollManualWatches(): Promise<void> {
 async function tick(): Promise<void> {
   if (state.paused) return;
 
-  await Promise.allSettled(_repos.map(pollRepo));
-  await pollManualWatches();
+  try {
+    await Promise.allSettled(_repos.map(pollRepo));
+    await pollManualWatches();
+  } catch (err) {
+    log(`Tick error: ${String(err)}`);
+  }
   _onUpdate(new Map(activeRuns));
 
   if (!state.paused) {

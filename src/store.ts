@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { app } from 'electron';
+import logger from 'electron-log';
 
 const MAX_IDS_PER_REPO = 200;
 
@@ -13,7 +14,8 @@ export function initStore(): void {
   if (fs.existsSync(storePath)) {
     try {
       store = JSON.parse(fs.readFileSync(storePath, 'utf-8')) as Record<string, number[]>;
-    } catch {
+    } catch (err) {
+      logger.warn(`Failed to read seen.json (resetting): ${String(err)}`);
       store = {};
     }
   }
@@ -33,7 +35,7 @@ export function markSeen(repo: string, ids: number[]): void {
 function flush(): void {
   try {
     fs.writeFileSync(storePath, JSON.stringify(store), 'utf-8');
-  } catch {
-    // non-fatal
+  } catch (err) {
+    logger.warn(`Failed to flush seen.json: ${String(err)}`);
   }
 }

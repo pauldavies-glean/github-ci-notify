@@ -4,11 +4,15 @@
   "mac": {
     "target": "dmg",
     "category": "public.app-category.developer-tools",
+    "icon": "assets/icon.icns",
     "extendInfo": {
       "NSUserNotificationAlertStyle": "alert"
     }
   },
-  "files": ["dist/**", "assets/**"],
+  "files": [
+    "dist/*.js",
+    "assets/**"
+  ],
   "extraResources": [
     { "from": "config.json", "to": "config.json" }
   ]

@@ -2,6 +2,10 @@
   "name": "github-ci-notify",
   "version": "1.0.0",
   "description": "macOS tray app for GitHub CI notifications",
+  "author": {
+    "name": "Paul Davies",
+    "email": "paul.davies@genio.co"
+  },
   "main": "dist/main.js",
   "scripts": {
     "start": "tsc && electron dist/main.js",

@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { app } from 'electron';
+import logger from 'electron-log';
 
 export interface ManualWatch {
   repo: string;
@@ -19,7 +20,11 @@ export function initManualWatch(): void {
   if (fs.existsSync(watchPath)) {
     try {
       watches = JSON.parse(fs.readFileSync(watchPath, 'utf-8')) as ManualWatch[];
-    } catch {
+      if (watches.length > 0) {
+        logger.info(`Loaded ${watches.length} manual watch(es) from disk`);
+      }
+    } catch (err) {
+      logger.warn(`Failed to read manual-watch.json (resetting): ${String(err)}`);
       watches = [];
     }
   }
@@ -47,7 +52,7 @@ export function removeWatch(repo: string, runId: number): void {
 function flush(): void {
   try {
     fs.writeFileSync(watchPath, JSON.stringify(watches), 'utf-8');
-  } catch {
-    // non-fatal
+  } catch (err) {
+    logger.warn(`Failed to flush manual-watch.json: ${String(err)}`);
   }
 }

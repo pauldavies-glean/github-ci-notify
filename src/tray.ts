@@ -119,7 +119,11 @@ function buildMenu(): Menu {
       if (e.manual) {
         submenu.push({
           label: 'Stop watching',
-          click: () => { removeWatch(repo, e.runId); updateTrayMenu(); },
+          click: () => {
+            logger.info(`Manual watch removed via tray: ${repo} #${e.runNumber} "${e.name}"`);
+            removeWatch(repo, e.runId);
+            updateTrayMenu();
+          },
         });
       }
       activeItems.push({
