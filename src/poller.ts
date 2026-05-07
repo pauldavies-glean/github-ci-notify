@@ -78,13 +78,38 @@ async function githubFetch(url: string): Promise<Response | null> {
 }
 
 async function fetchMyLogin(): Promise<string> {
-  const res = await fetch('https://api.github.com/user', { headers: githubHeaders() });
-  if (res.status === 401 || res.status === 403) {
-    throw new Error(`GitHub auth failed (${res.status}). Check token in config.json.`);
+  const delaysMs = [5_000, 15_000, 30_000, 60_000];
+  let attempt = 0;
+  let hadFailure = false;
+  for (;;) {
+    try {
+      const res = await fetch('https://api.github.com/user', { headers: githubHeaders() });
+      if (res.status === 401 || res.status === 403) {
+        throw new Error(`GitHub auth failed (${res.status}). Check token in Keychain or config.json.`);
+      }
+      if (!res.ok) {
+        throw new Error(`Unexpected status ${res.status} from /user`);
+      }
+      const data = (await res.json()) as { login: string };
+      log(`Authenticated as ${data.login}`);
+      if (hadFailure) {
+        new Notification({
+          title: 'GitHub CI Notify — Connected',
+          body: `Authenticated as ${data.login}`,
+        }).show();
+      }
+      return data.login;
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith('GitHub auth failed')) {
+        throw err;
+      }
+      hadFailure = true;
+      const wait = delaysMs[Math.min(attempt, delaysMs.length - 1)];
+      log(`Login fetch failed (${String(err)}) — retrying in ${wait / 1000}s`);
+      await new Promise<void>(r => setTimeout(r, wait));
+      attempt++;
+    }
   }
-  const data = (await res.json()) as { login: string };
-  log(`Authenticated as ${data.login}`);
-  return data.login;
 }
 
 function applyFilters(runs: WorkflowRun[], repoConfig: RepoConfig): WorkflowRun[] {
