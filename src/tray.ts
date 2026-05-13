@@ -1,10 +1,11 @@
-import { Tray, Menu, app, clipboard, Notification, shell } from 'electron';
+import { Tray, Menu, app, clipboard, shell } from 'electron';
 import * as path from 'path';
 import logger from 'electron-log';
 import { pausePolling, resumePolling, isPaused, ActiveRuns, fetchSingleRun, resolveRunId } from './poller';
 import { RepoConfig } from './config';
 import { parseRunInput } from './parse-input';
 import { getWatches, addWatch, removeWatch, hasWatch, ManualWatch } from './manual-watch';
+import { showNotification } from './notifier';
 
 let tray: Tray | null = null;
 let _repos: RepoConfig[] = [];
@@ -14,10 +15,10 @@ async function watchFromClipboard(): Promise<void> {
   const text = clipboard.readText();
   const parsed = parseRunInput(text);
   if (!parsed) {
-    new Notification({
+    showNotification({
       title: 'Watch run',
       body: 'Clipboard does not contain a run URL or numeric run ID',
-    }).show();
+    });
     return;
   }
 
@@ -32,28 +33,28 @@ async function watchFromClipboard(): Promise<void> {
   }
 
   if (!resolved) {
-    new Notification({
+    showNotification({
       title: 'Watch run',
       body: parsed.kind === 'raw-id'
         ? `Run ${parsed.runId} not found in any configured repo`
         : `Run ${parsed.runId} not found in ${(parsed as Extract<typeof parsed, { kind: 'with-repo' }>).repo}`,
-    }).show();
+    });
     return;
   }
 
   if (hasWatch(resolved.repo, resolved.runId)) {
-    new Notification({
+    showNotification({
       title: 'Watch run',
       body: `Already watching ${resolved.run.name} #${resolved.run.run_number}`,
-    }).show();
+    });
     return;
   }
 
   if (resolved.run.status === 'completed') {
-    new Notification({
+    showNotification({
       title: 'Watch run',
       body: `${resolved.run.name} #${resolved.run.run_number} already completed — not adding`,
-    }).show();
+    });
     return;
   }
 
@@ -67,14 +68,12 @@ async function watchFromClipboard(): Promise<void> {
   };
   addWatch(watch);
   logger.info(`Manual watch added: ${watch.repo} #${watch.runNumber} "${watch.name}" [${watch.branch}]`);
-  const confirmation = new Notification({
+  const runUrl = `https://github.com/${watch.repo}/actions/runs/${watch.runId}`;
+  showNotification({
     title: 'Watching run',
     body: `${watch.name} #${watch.runNumber} [${watch.branch}] (${watch.repo})`,
     silent: true,
-  });
-  const runUrl = `https://github.com/${watch.repo}/actions/runs/${watch.runId}`;
-  confirmation.on('click', () => { shell.openExternal(runUrl); });
-  confirmation.show();
+  }, () => shell.openExternal(runUrl));
   updateTrayMenu();
 }
 

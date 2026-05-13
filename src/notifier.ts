@@ -18,18 +18,22 @@ export interface WorkflowRun {
   actor: { login: string };
 }
 
+const liveNotifications = new Set<Notification>();
+
+export function showNotification(opts: Electron.NotificationConstructorOptions, onClick?: () => void): void {
+  const n = new Notification(opts);
+  liveNotifications.add(n);
+  if (onClick) n.on('click', onClick);
+  n.on('close', () => liveNotifications.delete(n));
+  n.show();
+}
+
 export function notify(repo: string, run: WorkflowRun): void {
   const success = run.conclusion === 'success';
   const repoName = repo.split('/')[1] ?? repo;
   const title = `${success ? '✓' : '✗'} ${repoName}`;
   const body = `${run.name} ${success ? 'passed' : 'FAILED'} (#${run.run_number}) [${run.head_branch}]`;
-
-  const notification = new Notification({ title, body, silent: true });
-  notification.on('click', () => {
-    shell.openExternal(run.html_url);
-  });
-  notification.show();
-
+  showNotification({ title, body, silent: true }, () => shell.openExternal(run.html_url));
   playSound(run.conclusion ?? 'failure');
 }
 
@@ -42,12 +46,11 @@ export function notifyBatch(repo: string, runs: WorkflowRun[]): void {
   if (passed > 0) parts.push(`${passed} passed`);
   if (failed > 0) parts.push(`${failed} failed`);
 
-  const notification = new Notification({
+  showNotification({
     title: `GitHub CI: ${repoName}`,
     body: `${runs.length} runs completed — ${parts.join(', ')}`,
     silent: true,
   });
-  notification.show();
   playSound(failed > 0 ? 'failure' : 'success');
 }
 
@@ -61,22 +64,17 @@ export function notifyStarted(repo: string, runs: WorkflowRun[]): void {
 
   if (runs.length === 1) {
     const run = runs[0];
-    const notification = new Notification({
+    showNotification({
       title: `▶ ${repoName}`,
       body: `${run.name} started (#${run.run_number}) [${run.head_branch}]`,
       silent: true,
-    });
-    notification.on('click', () => {
-      shell.openExternal(run.html_url);
-    });
-    notification.show();
+    }, () => shell.openExternal(run.html_url));
   } else {
-    const notification = new Notification({
+    showNotification({
       title: `▶ ${repoName}`,
       body: `${runs.length} runs started — ${runs.map(r => r.name).join(', ')}`,
       silent: true,
     });
-    notification.show();
   }
 
   exec(`afplay "${SOUNDS.started}"`);

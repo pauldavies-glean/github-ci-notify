@@ -1,4 +1,4 @@
-import { app, Notification } from 'electron';
+import { app } from 'electron';
 import logger from 'electron-log';
 
 logger.transports.file.level = 'info';
@@ -9,6 +9,7 @@ import { initStore } from './store';
 import { initManualWatch } from './manual-watch';
 import { createTray, updateTrayMenu } from './tray';
 import { startPolling } from './poller';
+import { showNotification } from './notifier';
 
 process.on('uncaughtException', (err) => {
   logger.error(`Uncaught exception: ${err.stack ?? err}`);
@@ -42,10 +43,10 @@ app.whenReady().then(async () => {
   try {
     config = await loadConfig();
   } catch (err) {
-    new Notification({
+    showNotification({
       title: 'GitHub CI Notify — Config Error',
       body: String(err),
-    }).show();
+    });
     console.error(err);
     return;
   }
@@ -59,10 +60,10 @@ app.whenReady().then(async () => {
       updateTrayMenu(active);
     });
   } catch (err) {
-    new Notification({
+    showNotification({
       title: 'GitHub CI Notify — Startup Error',
       body: String(err),
-    }).show();
+    });
     console.error(err);
   }
 });

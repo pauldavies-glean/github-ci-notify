@@ -1,8 +1,7 @@
-import { Notification } from 'electron';
 import logger from 'electron-log';
 import { RepoConfig } from './config';
 import { getSeenIds, markSeen } from './store';
-import { notify, notifyBatch, notifyStarted, WorkflowRun } from './notifier';
+import { notify, notifyBatch, notifyStarted, showNotification, WorkflowRun } from './notifier';
 import { getWatches, removeWatch } from './manual-watch';
 
 export type ActiveRuns = Map<string, WorkflowRun[]>; // repo → in-progress runs
@@ -93,10 +92,10 @@ async function fetchMyLogin(): Promise<string> {
       const data = (await res.json()) as { login: string };
       log(`Authenticated as ${data.login}`);
       if (hadFailure) {
-        new Notification({
+        showNotification({
           title: 'GitHub CI Notify — Connected',
           body: `Authenticated as ${data.login}`,
-        }).show();
+        });
       }
       return data.login;
     } catch (err) {
@@ -136,10 +135,10 @@ async function fetchRuns(
 
   if (res.status === 401) {
     log(`Auth failed for ${repo} (401) — stopping poller`);
-    new Notification({
+    showNotification({
       title: 'GitHub CI Notify — Auth Failed',
       body: `Check token in config.json (repo: ${repo})`,
-    }).show();
+    });
     stopPolling();
     return null;
   }
@@ -151,10 +150,10 @@ async function fetchRuns(
       return null;
     }
     log(`Auth failed for ${repo} (403) — stopping poller`);
-    new Notification({
+    showNotification({
       title: 'GitHub CI Notify — Auth Failed',
       body: `Check token in config.json (repo: ${repo})`,
-    }).show();
+    });
     stopPolling();
     return null;
   }
