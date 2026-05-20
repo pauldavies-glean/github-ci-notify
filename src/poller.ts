@@ -111,25 +111,50 @@ async function fetchMyLogin(): Promise<string> {
   }
 }
 
+const MAX_SHAS_PER_REPO = 100;
+const myShas = new Map<string, string[]>(); // repo → recent head_shas user actored (LRU-ish)
+
+function rememberSha(repo: string, sha: string): void {
+  if (!sha) return;
+  const list = myShas.get(repo) ?? [];
+  const idx = list.indexOf(sha);
+  if (idx !== -1) list.splice(idx, 1);
+  list.push(sha);
+  if (list.length > MAX_SHAS_PER_REPO) list.shift();
+  myShas.set(repo, list);
+}
+
+function isMine(run: WorkflowRun): boolean {
+  return run.actor.login === state.myLogin || run.triggering_actor?.login === state.myLogin;
+}
+
 function applyFilters(runs: WorkflowRun[], repoConfig: RepoConfig): WorkflowRun[] {
-  const { workflows, filterCurrentUser = true } = repoConfig;
+  const { repo, workflows, filterCurrentUser = true } = repoConfig;
+
+  // First pass: index SHAs of user-actored runs (regardless of workflow filter)
+  for (const run of runs) {
+    if (isMine(run)) rememberSha(repo, run.head_sha);
+  }
+
+  const knownShas = new Set(myShas.get(repo) ?? []);
+
   return runs.filter(run => {
-    if (filterCurrentUser && run.actor.login !== state.myLogin) return false;
     if (workflows?.length) {
       if (!workflows.some(w => w.toLowerCase() === run.name.toLowerCase())) return false;
     }
-    return true;
+    if (!filterCurrentUser) return true;
+    if (isMine(run)) return true;
+    if (run.head_sha && knownShas.has(run.head_sha)) return true;
+    return false;
   });
 }
 
 async function fetchRuns(
   repo: string,
-  status: 'in_progress' | 'completed',
-  actorFilter?: string
+  status: 'in_progress' | 'completed'
 ): Promise<WorkflowRun[] | null> {
-  const actor = actorFilter ? `&actor=${encodeURIComponent(actorFilter)}` : '';
   const res = await githubFetch(
-    `https://api.github.com/repos/${repo}/actions/runs?status=${status}&per_page=30${actor}`
+    `https://api.github.com/repos/${repo}/actions/runs?status=${status}&per_page=30`
   );
   if (!res) return null;
 
@@ -180,12 +205,11 @@ async function fetchRuns(
 }
 
 async function pollRepo(repoConfig: RepoConfig): Promise<void> {
-  const { repo, filterCurrentUser = true } = repoConfig;
-  const actorFilter = filterCurrentUser ? state.myLogin : undefined;
+  const { repo } = repoConfig;
   log(`Polling ${repo}...`);
 
   // Fetch in-progress runs for tray display
-  const inProgressRuns = await fetchRuns(repo, 'in_progress', actorFilter);
+  const inProgressRuns = await fetchRuns(repo, 'in_progress');
   if (inProgressRuns) {
     const filtered = applyFilters(inProgressRuns, repoConfig);
     const notified = notifiedStarted.get(repo) ?? new Set<number>();
@@ -199,13 +223,14 @@ async function pollRepo(repoConfig: RepoConfig): Promise<void> {
       notifiedStarted.set(repo, notified);
       if (initializedRepos.has(repo)) {
         log(`  ${newlyStarted.length} newly started — ${newlyStarted.map(r => `"${r.name}"`).join(', ')}`);
+        _onUpdate(new Map(activeRuns)); // refresh tray before firing notif
         notifyStarted(repo, newlyStarted);
       }
     }
   }
 
   // Fetch completed runs for notifications
-  const completedRuns = await fetchRuns(repo, 'completed', actorFilter);
+  const completedRuns = await fetchRuns(repo, 'completed');
   if (completedRuns) {
     const allCompletedIds = completedRuns.map(r => r.id);
     const seenIds = getSeenIds(repo);

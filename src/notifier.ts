@@ -15,7 +15,9 @@ export interface WorkflowRun {
   run_number: number;
   html_url: string;
   head_branch: string;
+  head_sha: string;
   actor: { login: string };
+  triggering_actor?: { login: string };
 }
 
 const liveNotifications = new Set<Notification>();
