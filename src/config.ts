@@ -7,7 +7,8 @@ import { getToken, setToken } from './keychain';
 export interface RepoConfig {
   repo: string;
   workflows?: string[];
-  filterCurrentUser?: boolean; // default: true
+  filterCurrentUser?: boolean; // default: true (ignored if `actors` is set)
+  actors?: string[]; // explicit allowlist of actor logins; supports `*` wildcard (e.g. "*[bot]")
 }
 
 export interface Config {

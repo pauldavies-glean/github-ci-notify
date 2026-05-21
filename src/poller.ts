@@ -27,6 +27,32 @@ const activeRuns: ActiveRuns = new Map();
 const initializedRepos = new Set<string>();
 const notifiedStarted = new Map<string, Set<number>>(); // repo → set of run ids already notified
 
+export interface RecentRun {
+  run: WorkflowRun;
+  completedAt: number;
+}
+const RECENT_RETENTION_MS = 15 * 60 * 1000;
+const recentlyCompleted = new Map<string, RecentRun[]>();
+
+function pushRecent(repo: string, run: WorkflowRun): void {
+  const list = recentlyCompleted.get(repo) ?? [];
+  list.push({ run, completedAt: Date.now() });
+  recentlyCompleted.set(repo, list);
+}
+
+function pruneRecent(): void {
+  const cutoff = Date.now() - RECENT_RETENTION_MS;
+  for (const [repo, list] of recentlyCompleted) {
+    const kept = list.filter(e => e.completedAt > cutoff);
+    if (kept.length === 0) recentlyCompleted.delete(repo);
+    else if (kept.length !== list.length) recentlyCompleted.set(repo, kept);
+  }
+}
+
+export function getRecentlyCompleted(): Map<string, RecentRun[]> {
+  return new Map(recentlyCompleted);
+}
+
 const log = (msg: string) => logger.info(msg);
 
 let rateLimitBlockedUntil = 0; // epoch ms; 0 = not blocked
@@ -112,38 +138,58 @@ async function fetchMyLogin(): Promise<string> {
 }
 
 const MAX_SHAS_PER_REPO = 100;
-const myShas = new Map<string, string[]>(); // repo → recent head_shas user actored (LRU-ish)
+const trackedShas = new Map<string, string[]>(); // repo → recent head_shas matching allowed actors (LRU-ish)
 
 function rememberSha(repo: string, sha: string): void {
   if (!sha) return;
-  const list = myShas.get(repo) ?? [];
+  const list = trackedShas.get(repo) ?? [];
   const idx = list.indexOf(sha);
   if (idx !== -1) list.splice(idx, 1);
   list.push(sha);
   if (list.length > MAX_SHAS_PER_REPO) list.shift();
-  myShas.set(repo, list);
+  trackedShas.set(repo, list);
 }
 
-function isMine(run: WorkflowRun): boolean {
-  return run.actor.login === state.myLogin || run.triggering_actor?.login === state.myLogin;
+function allowedActors(rc: RepoConfig): string[] | null {
+  if (rc.actors?.length) return rc.actors;
+  if (rc.filterCurrentUser !== false) return [state.myLogin];
+  return null; // no actor filter at all
+}
+
+function actorMatches(login: string | undefined, patterns: string[]): boolean {
+  if (!login) return false;
+  return patterns.some(p => {
+    if (p === login) return true;
+    if (p.includes('*')) {
+      const re = new RegExp('^' + p.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$', 'i');
+      return re.test(login);
+    }
+    return false;
+  });
+}
+
+function runHasAllowedActor(run: WorkflowRun, allowed: string[]): boolean {
+  return actorMatches(run.actor.login, allowed) || actorMatches(run.triggering_actor?.login, allowed);
 }
 
 function applyFilters(runs: WorkflowRun[], repoConfig: RepoConfig): WorkflowRun[] {
-  const { repo, workflows, filterCurrentUser = true } = repoConfig;
+  const { repo, workflows } = repoConfig;
+  const allowed = allowedActors(repoConfig);
 
-  // First pass: index SHAs of user-actored runs (regardless of workflow filter)
-  for (const run of runs) {
-    if (isMine(run)) rememberSha(repo, run.head_sha);
+  // First pass: index SHAs of runs matching allowed actors (independent of workflow filter)
+  if (allowed) {
+    for (const run of runs) {
+      if (runHasAllowedActor(run, allowed)) rememberSha(repo, run.head_sha);
+    }
   }
-
-  const knownShas = new Set(myShas.get(repo) ?? []);
+  const knownShas = new Set(trackedShas.get(repo) ?? []);
 
   return runs.filter(run => {
     if (workflows?.length) {
       if (!workflows.some(w => w.toLowerCase() === run.name.toLowerCase())) return false;
     }
-    if (!filterCurrentUser) return true;
-    if (isMine(run)) return true;
+    if (!allowed) return true;
+    if (runHasAllowedActor(run, allowed)) return true;
     if (run.head_sha && knownShas.has(run.head_sha)) return true;
     return false;
   });
@@ -258,9 +304,11 @@ async function pollRepo(repoConfig: RepoConfig): Promise<void> {
     } else if (notifiable.length === 1) {
       const run = notifiable[0];
       log(`  notify #${run.run_number} "${run.name}" [${run.head_branch}] — ${run.conclusion}`);
+      pushRecent(repo, run);
       notify(repo, run);
     } else if (notifiable.length > 1) {
       log(`  notify batch: ${notifiable.map(r => `"${r.name}" ${r.conclusion}`).join(', ')}`);
+      for (const r of notifiable) pushRecent(repo, r);
       notifyBatch(repo, notifiable);
     }
   }
@@ -301,6 +349,7 @@ async function pollManualWatches(): Promise<void> {
     if (!run) continue;
     if (run.status === 'completed') {
       log(`manual watch: ${w.repo} #${run.run_number} "${run.name}" — ${run.conclusion}`);
+      pushRecent(w.repo, run);
       notify(w.repo, run);
       removeWatch(w.repo, w.runId);
     }
@@ -316,6 +365,7 @@ async function tick(): Promise<void> {
   } catch (err) {
     log(`Tick error: ${String(err)}`);
   }
+  pruneRecent();
   _onUpdate(new Map(activeRuns));
 
   if (!state.paused) {

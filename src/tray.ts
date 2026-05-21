@@ -1,7 +1,7 @@
 import { Tray, Menu, app, clipboard, shell } from 'electron';
 import * as path from 'path';
 import logger from 'electron-log';
-import { pausePolling, resumePolling, isPaused, ActiveRuns, fetchSingleRun, resolveRunId } from './poller';
+import { pausePolling, resumePolling, isPaused, ActiveRuns, fetchSingleRun, resolveRunId, getRecentlyCompleted } from './poller';
 import { RepoConfig } from './config';
 import { parseRunInput } from './parse-input';
 import { getWatches, addWatch, removeWatch, hasWatch, ManualWatch } from './manual-watch';
@@ -106,8 +106,11 @@ function buildMenu(): Menu {
 
   const activeItems: Electron.MenuItemConstructorOptions[] = [];
   let totalActive = 0;
-  for (const [repo, entries] of byRepo) {
-    if (entries.length === 0) continue;
+  const allRepos = new Set<string>([...byRepo.keys(), ...getRecentlyCompleted().keys()]);
+  for (const repo of allRepos) {
+    const entries = byRepo.get(repo) ?? [];
+    const recent = getRecentlyCompleted().get(repo) ?? [];
+    if (entries.length === 0 && recent.length === 0) continue;
     totalActive += entries.length;
     activeItems.push({ label: repo, enabled: false });
     for (const e of entries) {
@@ -128,6 +131,15 @@ function buildMenu(): Menu {
       activeItems.push({
         label: `  ⏳ ${e.name} #${e.runNumber} [${e.branch}]`,
         submenu,
+      });
+    }
+    for (const r of recent) {
+      const icon = r.run.conclusion === 'success' ? '✓' : '✗';
+      activeItems.push({
+        label: `  ${icon} ${r.run.name} #${r.run.run_number} [${r.run.head_branch}]`,
+        submenu: [
+          { label: 'Open in browser', click: () => { shell.openExternal(r.run.html_url); } },
+        ],
       });
     }
   }
