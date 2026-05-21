@@ -7,13 +7,15 @@ import { getToken, setToken } from './keychain';
 export interface RepoConfig {
   repo: string;
   workflows?: string[];
-  filterCurrentUser?: boolean; // default: true (ignored if `actors` is set)
-  actors?: string[]; // explicit allowlist of actor logins; supports `*` wildcard (e.g. "*[bot]")
+  myEmail?: boolean; // include runs authored by me (default: true)
+  emails?: string[]; // additional commit-author emails to include
 }
 
 export interface Config {
   token: string;
   pollIntervalSeconds: number;
+  myEmail?: boolean; // default applied to repos without override
+  emails?: string[]; // default applied to repos without override
   repos: RepoConfig[];
 }
 
@@ -53,6 +55,8 @@ export async function loadConfig(): Promise<Config> {
   return {
     token,
     pollIntervalSeconds: config.pollIntervalSeconds ?? 45,
+    myEmail: config.myEmail,
+    emails: config.emails,
     repos: config.repos,
   };
 }

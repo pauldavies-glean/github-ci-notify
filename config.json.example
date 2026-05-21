@@ -1,6 +1,8 @@
 {
-  "token": "ghp_xxxxxxxxxxxxxxxxxxxx",
+  "token": "ghp_xxxxxxxxxxxxxxxxxxxx (optional — falls back to macOS Keychain: security add-generic-password -s github-ci-notify -a token -w <token>)",
   "pollIntervalSeconds": 45,
+  "myEmail": true,
+  "emails": ["teammate@example.com"],
   "repos": [
     {
       "repo": "owner/repo1",
@@ -11,7 +13,8 @@
     },
     {
       "repo": "owner/shared-repo",
-      "filterCurrentUser": false
+      "myEmail": false,
+      "emails": ["bot@example.com"]
     }
   ]
 }

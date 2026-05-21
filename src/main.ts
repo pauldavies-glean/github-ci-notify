@@ -56,9 +56,13 @@ app.whenReady().then(async () => {
   createTray(config.repos);
 
   try {
-    await startPolling(config.token, config.repos, config.pollIntervalSeconds, (active) => {
-      updateTrayMenu(active);
-    });
+    await startPolling(
+      config.token,
+      config.repos,
+      config.pollIntervalSeconds,
+      (active) => { updateTrayMenu(active); },
+      { myEmail: config.myEmail, emails: config.emails }
+    );
   } catch (err) {
     showNotification({
       title: 'GitHub CI Notify — Startup Error',

@@ -9,18 +9,22 @@ export type ActiveRuns = Map<string, WorkflowRun[]>; // repo → in-progress run
 interface PollState {
   paused: boolean;
   myLogin: string;
+  myEmails: string[];
   timer: ReturnType<typeof setTimeout> | null;
 }
 
 const state: PollState = {
   paused: false,
   myLogin: '',
+  myEmails: [],
   timer: null,
 };
 
 let _token = '';
 let _repos: RepoConfig[] = [];
 let _intervalMs = 45_000;
+let _globalMyEmail: boolean | undefined = undefined;
+let _globalEmails: string[] | undefined = undefined;
 let _onUpdate: ((active: ActiveRuns) => void) = () => {};
 
 const activeRuns: ActiveRuns = new Map();
@@ -137,8 +141,39 @@ async function fetchMyLogin(): Promise<string> {
   }
 }
 
+async function fetchMyEmails(): Promise<string[]> {
+  // Try /user/emails (needs user:email scope), fall back to /user.email
+  try {
+    const res = await fetch('https://api.github.com/user/emails', { headers: githubHeaders() });
+    if (res.ok) {
+      const data = (await res.json()) as Array<{ email: string; primary: boolean; verified: boolean }>;
+      const emails = data.filter(e => e.verified).map(e => e.email.toLowerCase());
+      log(`Fetched ${emails.length} verified email(s) from /user/emails`);
+      return emails;
+    }
+    log(`/user/emails returned ${res.status} — falling back to /user.email`);
+  } catch (err) {
+    log(`/user/emails fetch failed: ${String(err)} — falling back to /user.email`);
+  }
+  try {
+    const res = await fetch('https://api.github.com/user', { headers: githubHeaders() });
+    if (res.ok) {
+      const data = (await res.json()) as { email: string | null };
+      if (data.email) {
+        log(`Using public email from /user: ${data.email}`);
+        return [data.email.toLowerCase()];
+      }
+    }
+  } catch (err) {
+    log(`/user fallback email fetch failed: ${String(err)}`);
+  }
+  log('No emails fetched — myEmail filter will match nothing');
+  return [];
+}
+
 const MAX_SHAS_PER_REPO = 100;
-const trackedShas = new Map<string, string[]>(); // repo → recent "sha|branch" tuples matching allowed actors (LRU-ish)
+const trackedShas = new Map<string, string[]>(); // repo → recent "sha|branch" tuples matching allowed authors (LRU-ish)
+const myBranches = new Map<string, Set<string>>(); // repo → branches that have had an authored-by-me run
 
 function shaKey(sha: string, branch: string): string {
   return `${sha}|${branch}`;
@@ -155,46 +190,51 @@ function rememberSha(repo: string, sha: string, branch: string): void {
   trackedShas.set(repo, list);
 }
 
-function allowedActors(rc: RepoConfig): string[] | null {
-  if (rc.actors?.length) return rc.actors;
-  if (rc.filterCurrentUser !== false) return [state.myLogin];
-  return null; // no actor filter at all
+function rememberBranch(repo: string, branch: string): void {
+  if (!branch) return;
+  const set = myBranches.get(repo) ?? new Set<string>();
+  set.add(branch);
+  myBranches.set(repo, set);
 }
 
-function actorMatches(login: string | undefined, patterns: string[]): boolean {
-  if (!login) return false;
-  return patterns.some(p => {
-    if (p === login) return true;
-    if (p.includes('*')) {
-      const re = new RegExp('^' + p.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$', 'i');
-      return re.test(login);
-    }
-    return false;
-  });
+function allowedEmails(rc: RepoConfig): string[] {
+  const useMyEmail = rc.myEmail ?? _globalMyEmail ?? true;
+  const extras = rc.emails ?? _globalEmails ?? [];
+  const list: string[] = [];
+  if (useMyEmail) list.push(...state.myEmails);
+  list.push(...extras);
+  return list.map(e => e.toLowerCase());
 }
 
-function runHasAllowedActor(run: WorkflowRun, allowed: string[]): boolean {
-  return actorMatches(run.actor.login, allowed) || actorMatches(run.triggering_actor?.login, allowed);
+function runAuthoredByEmail(run: WorkflowRun, allowed: string[]): boolean {
+  if (allowed.length === 0) return false;
+  const author = run.head_commit?.author?.email?.toLowerCase();
+  const committer = run.head_commit?.committer?.email?.toLowerCase();
+  if (author && allowed.includes(author)) return true;
+  if (committer && allowed.includes(committer)) return true;
+  return false;
 }
 
 function applyFilters(runs: WorkflowRun[], repoConfig: RepoConfig): WorkflowRun[] {
   const { repo, workflows } = repoConfig;
-  const allowed = allowedActors(repoConfig);
+  const allowed = allowedEmails(repoConfig);
 
-  // First pass: index SHA+branch of runs matching allowed actors (independent of workflow filter)
-  if (allowed) {
-    for (const run of runs) {
-      if (runHasAllowedActor(run, allowed)) rememberSha(repo, run.head_sha, run.head_branch);
+  // First pass: index branches + SHA+branch tuples for runs authored by me/allowed
+  for (const run of runs) {
+    if (runAuthoredByEmail(run, allowed)) {
+      rememberBranch(repo, run.head_branch);
+      rememberSha(repo, run.head_sha, run.head_branch);
     }
   }
+  const knownBranches = myBranches.get(repo) ?? new Set<string>();
   const knownKeys = new Set(trackedShas.get(repo) ?? []);
 
   return runs.filter(run => {
     if (workflows?.length) {
       if (!workflows.some(w => w.toLowerCase() === run.name.toLowerCase())) return false;
     }
-    if (!allowed) return true;
-    if (runHasAllowedActor(run, allowed)) return true;
+    if (runAuthoredByEmail(run, allowed)) return true;
+    if (run.head_branch && knownBranches.has(run.head_branch)) return true;
     if (run.head_sha && run.head_branch && knownKeys.has(shaKey(run.head_sha, run.head_branch))) return true;
     return false;
   });
@@ -382,14 +422,18 @@ export async function startPolling(
   token: string,
   repos: RepoConfig[],
   intervalSeconds: number,
-  onUpdate: (active: ActiveRuns) => void
+  onUpdate: (active: ActiveRuns) => void,
+  globals?: { myEmail?: boolean; emails?: string[] }
 ): Promise<void> {
   _token = token;
   _repos = repos;
   _intervalMs = intervalSeconds * 1000;
+  _globalMyEmail = globals?.myEmail;
+  _globalEmails = globals?.emails;
   _onUpdate = onUpdate;
 
   state.myLogin = await fetchMyLogin();
+  state.myEmails = await fetchMyEmails();
   log(`Polling ${repos.length} repo(s) every ${intervalSeconds}s`);
   state.timer = setTimeout(() => void tick(), 0);
 }

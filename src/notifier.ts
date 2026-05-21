@@ -18,6 +18,10 @@ export interface WorkflowRun {
   head_sha: string;
   actor: { login: string };
   triggering_actor?: { login: string };
+  head_commit?: {
+    author?: { name: string; email: string };
+    committer?: { name: string; email: string };
+  };
 }
 
 const liveNotifications = new Set<Notification>();
