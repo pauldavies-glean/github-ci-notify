@@ -138,14 +138,19 @@ async function fetchMyLogin(): Promise<string> {
 }
 
 const MAX_SHAS_PER_REPO = 100;
-const trackedShas = new Map<string, string[]>(); // repo → recent head_shas matching allowed actors (LRU-ish)
+const trackedShas = new Map<string, string[]>(); // repo → recent "sha|branch" tuples matching allowed actors (LRU-ish)
 
-function rememberSha(repo: string, sha: string): void {
-  if (!sha) return;
+function shaKey(sha: string, branch: string): string {
+  return `${sha}|${branch}`;
+}
+
+function rememberSha(repo: string, sha: string, branch: string): void {
+  if (!sha || !branch) return;
+  const key = shaKey(sha, branch);
   const list = trackedShas.get(repo) ?? [];
-  const idx = list.indexOf(sha);
+  const idx = list.indexOf(key);
   if (idx !== -1) list.splice(idx, 1);
-  list.push(sha);
+  list.push(key);
   if (list.length > MAX_SHAS_PER_REPO) list.shift();
   trackedShas.set(repo, list);
 }
@@ -176,13 +181,13 @@ function applyFilters(runs: WorkflowRun[], repoConfig: RepoConfig): WorkflowRun[
   const { repo, workflows } = repoConfig;
   const allowed = allowedActors(repoConfig);
 
-  // First pass: index SHAs of runs matching allowed actors (independent of workflow filter)
+  // First pass: index SHA+branch of runs matching allowed actors (independent of workflow filter)
   if (allowed) {
     for (const run of runs) {
-      if (runHasAllowedActor(run, allowed)) rememberSha(repo, run.head_sha);
+      if (runHasAllowedActor(run, allowed)) rememberSha(repo, run.head_sha, run.head_branch);
     }
   }
-  const knownShas = new Set(trackedShas.get(repo) ?? []);
+  const knownKeys = new Set(trackedShas.get(repo) ?? []);
 
   return runs.filter(run => {
     if (workflows?.length) {
@@ -190,7 +195,7 @@ function applyFilters(runs: WorkflowRun[], repoConfig: RepoConfig): WorkflowRun[
     }
     if (!allowed) return true;
     if (runHasAllowedActor(run, allowed)) return true;
-    if (run.head_sha && knownShas.has(run.head_sha)) return true;
+    if (run.head_sha && run.head_branch && knownKeys.has(shaKey(run.head_sha, run.head_branch))) return true;
     return false;
   });
 }
