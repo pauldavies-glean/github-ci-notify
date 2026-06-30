@@ -61,6 +61,15 @@ const log = (msg: string) => logger.info(msg);
 
 let rateLimitBlockedUntil = 0; // epoch ms; 0 = not blocked
 
+// Auth-failure tolerance: a single 401/403 is often transient (GitHub blips,
+// abuse-detection 403s, brief token rejections). Only stop the poller after
+// AUTH_FAILURE_LIMIT *consecutive ticks* in which auth failed and nothing
+// succeeded — any successful fetch in a tick resets the counter.
+const AUTH_FAILURE_LIMIT = 4;
+let authFailureTicks = 0;
+let tickAuthFailed = false; // any 401/403 (non-rate-limit) seen this tick
+let tickAuthOk = false; // any successful fetch seen this tick
+
 function backoffMsFromHeaders(res: Response): number {
   const reset = res.headers.get('X-RateLimit-Reset');
   if (reset) {
@@ -250,12 +259,8 @@ async function fetchRuns(
   if (!res) return null;
 
   if (res.status === 401) {
-    log(`Auth failed for ${repo} (401) — stopping poller`);
-    showNotification({
-      title: 'GitHub CI Notify — Auth Failed',
-      body: `Check token in config.json (repo: ${repo})`,
-    });
-    stopPolling();
+    tickAuthFailed = true;
+    log(`Auth failed for ${repo} (401) — will retry next tick`);
     return null;
   }
 
@@ -265,12 +270,8 @@ async function fetchRuns(
       applyRateLimitBlock(res, '403 primary');
       return null;
     }
-    log(`Auth failed for ${repo} (403) — stopping poller`);
-    showNotification({
-      title: 'GitHub CI Notify — Auth Failed',
-      body: `Check token in config.json (repo: ${repo})`,
-    });
-    stopPolling();
+    tickAuthFailed = true;
+    log(`Auth failed for ${repo} (403) — will retry next tick`);
     return null;
   }
 
@@ -286,6 +287,7 @@ async function fetchRuns(
     return null;
   }
 
+  tickAuthOk = true;
   try {
     const data = (await res.json()) as { workflow_runs: WorkflowRun[] };
     return data.workflow_runs;
@@ -401,15 +403,48 @@ async function pollManualWatches(): Promise<void> {
   }
 }
 
+// Decide whether the poller should keep running based on this tick's auth
+// outcomes. Any success clears the streak (and notifies on recovery); a tick
+// with only auth failures advances the streak and stops once it's sustained.
+function evaluateAuthHealth(): void {
+  if (tickAuthOk) {
+    if (authFailureTicks > 0) {
+      log(`Auth recovered after ${authFailureTicks} failed tick(s)`);
+      showNotification({
+        title: 'GitHub CI Notify — Connected',
+        body: 'Authentication recovered',
+      });
+    }
+    authFailureTicks = 0;
+    return;
+  }
+  if (!tickAuthFailed) return; // no auth signal either way (e.g. rate-limited)
+
+  authFailureTicks++;
+  if (authFailureTicks < AUTH_FAILURE_LIMIT) {
+    log(`Auth failing — tick ${authFailureTicks}/${AUTH_FAILURE_LIMIT}, will retry`);
+    return;
+  }
+  log(`Auth failed ${authFailureTicks} consecutive ticks — stopping poller`);
+  showNotification({
+    title: 'GitHub CI Notify — Auth Failed',
+    body: 'Check token in config.json — polling stopped',
+  });
+  stopPolling();
+}
+
 async function tick(): Promise<void> {
   if (state.paused) return;
 
+  tickAuthFailed = false;
+  tickAuthOk = false;
   try {
     await Promise.allSettled(_repos.map(pollRepo));
     await pollManualWatches();
   } catch (err) {
     log(`Tick error: ${String(err)}`);
   }
+  evaluateAuthHealth();
   pruneRecent();
   _onUpdate(new Map(activeRuns));
 
@@ -453,6 +488,7 @@ export function pausePolling(): void {
 
 export function resumePolling(): void {
   log('Polling resumed');
+  authFailureTicks = 0;
   state.paused = false;
   state.timer = setTimeout(() => void tick(), 0);
 }
