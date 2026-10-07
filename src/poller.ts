@@ -36,6 +36,14 @@ export interface RecentRun {
   completedAt: number;
 }
 const RECENT_RETENTION_MS = 15 * 60 * 1000;
+const STALE_COMPLETION_MS = 10 * 60 * 1000;
+
+export function isStaleCompletion(run: WorkflowRun, now: number, intervalMs: number): boolean {
+  if (!run.updated_at) return false;
+  const finishedAt = Date.parse(run.updated_at);
+  if (Number.isNaN(finishedAt)) return false;
+  return now - finishedAt > Math.max(STALE_COMPLETION_MS, 3 * intervalMs);
+}
 const recentlyCompleted = new Map<string, RecentRun[]>();
 
 function pushRecent(repo: string, run: WorkflowRun): void {
@@ -333,10 +341,17 @@ async function pollRepo(repoConfig: RepoConfig): Promise<void> {
       log(`${repo}: ${newRuns.length} new completed run(s) detected`);
     }
 
-    const notifiable = applyFilters(newRuns, repoConfig);
-    const skipped = newRuns.length - notifiable.length;
+    const matching = applyFilters(newRuns, repoConfig);
+    const skipped = newRuns.length - matching.length;
     if (skipped > 0) {
       log(`  ${skipped} run(s) skipped by actor/workflow filter`);
+    }
+
+    const now = Date.now();
+    const stale = matching.filter(r => isStaleCompletion(r, now, _intervalMs));
+    const notifiable = matching.filter(r => !stale.includes(r));
+    if (stale.length > 0 && initializedRepos.has(repo)) {
+      log(`  ${stale.length} run(s) suppressed as stale — ${stale.map(r => `#${r.run_number} "${r.name}" finished ${r.updated_at}`).join(', ')}`);
     }
 
     markSeen(repo, allCompletedIds);
