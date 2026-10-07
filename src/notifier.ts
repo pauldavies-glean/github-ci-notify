@@ -16,6 +16,7 @@ export interface WorkflowRun {
   html_url: string;
   head_branch: string;
   head_sha: string;
+  updated_at?: string;
   actor: { login: string };
   triggering_actor?: { login: string };
   head_commit?: {
